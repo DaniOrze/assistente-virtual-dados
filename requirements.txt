@@ -1,0 +1,8 @@
+langchain
+langgraph
+langchain-anthropic
+streamlit
+plotly
+pandas
+python-dotenv
+fpdf2
