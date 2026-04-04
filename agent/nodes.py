@@ -1,8 +1,14 @@
 import json
+import os
 import re
 
 from dotenv import load_dotenv
 load_dotenv()
+
+import streamlit as st
+
+if "ANTHROPIC_API_KEY" in st.secrets:
+    os.environ["ANTHROPIC_API_KEY"] = st.secrets["ANTHROPIC_API_KEY"]
 
 from agent.tools import get_schema, run_query
 from langchain_anthropic import ChatAnthropic
