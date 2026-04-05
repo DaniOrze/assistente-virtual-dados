@@ -34,8 +34,6 @@ O sistema funciona como um assistente: recebe uma pergunta em português, descob
 - Painel de raciocínio expansível: exibe cada etapa e a query gerada
 - Tentar novamente: Opção para fazer o agente reexecutar a pergunta anterior
 
----
-
 ## Instalação e Execução
 
 ### Pré-requisitos
@@ -133,6 +131,55 @@ O agente é construído com **LangGraph** e opera como um grafo de nós com rote
 - **Auto-correção por loop**: ao falhar, o nó `generate_sql` recebe o erro como contexto e tenta gerar uma query corrigida, até 3 vezes.
 - **Separação de banco de dados**: os dados analíticos (`anexo_desafio_1.db`) nunca são alterados; usuários e histórico ficam em `app.db`, isolando responsabilidades.
 - **Estado rico**: o `TypedDict` de estado carrega 16 campos — incluindo histórico de conversa, steps intermediários e raciocínio — permitindo que qualquer nó acesse o contexto completo da sessão.
+
+## Exemplos de Consultas Testadas
+
+### Consulta simples
+
+> *"Quais são os 5 produtos mais vendidos?"*
+
+<img src="src/simples.png"/>
+
+---
+
+### Consulta com filtro temporal
+
+> *"Qual foi o faturamento total em 2025?"*
+
+<img src="src/2025.png"/>
+
+---
+
+### Follow-up de conversa
+
+> *"E em 2023?"*
+
+<img src="src/2023.png"/>
+
+---
+
+### Consulta com agrupamento
+
+> *"Mostre as vendas por categoria de produto"*
+
+<img src="src/agrupamento.png"/>
+
+---
+
+### Consulta multi-step
+
+> *"Os clientes mais valiosos da empresa estão sendo bem atendidos?"*
+
+<img src="src/multistep.png"/>
+
+---
+
+### Consulta com gráfico
+
+> *Me dê um gráfico com o total de vendas por canal de aquisição do usuário, mensalmente, para todos os meses.*
+
+<img src="src/grafico.png"/>
+
 
 ## Sugestões de Melhorias e Extensões
 
