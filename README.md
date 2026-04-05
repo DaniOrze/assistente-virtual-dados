@@ -9,6 +9,9 @@
 
 > Analista de dados inteligente que responde perguntas de negócio em linguagem natural, consultando um banco de dados SQLite e apresentando os resultados com gráficos interativos, tabelas e exportação.
 
+**Deploy Link: 
+[Assistente de Dados](https://daniorze-assistente-virtual-dados.streamlit.app/)**
+
 <p align="center">
   <p>
     <img src="src/loginn.png" width="400px"/>
@@ -122,7 +125,7 @@ O agente é construído com **LangGraph** e opera como um grafo de nós com rote
 
 ### Diagrama do fluxo
 
-![Arquitetura](src/arquitetura_agente_assistente.svg)
+![Arquitetura](src/fluxo_agente_assistente.svg)
 
 ### Decisões de arquitetura
 
