@@ -16,3 +16,4 @@ class AgentState(TypedDict):
     query_plan: List[str]
     current_step: int
     step_results: List[Any]
+    username: Optional[str]

@@ -40,6 +40,46 @@ def _history_context(history: list) -> str:
         for h in tail
     )
 
+def node_check_relevance(state):
+    question = state["question"]
+    username = state.get("username") or "usuário"
+
+    prompt = f"""Você é um assistente de análise de dados de uma empresa. \
+Seu único papel é responder perguntas sobre os dados internos da empresa: \
+vendas, clientes, compras, suporte, campanhas de marketing e métricas de negócio.
+
+Pergunta recebida: "{question}"
+
+Classifique a pergunta em uma das categorias:
+- "relevant": a pergunta é sobre análise de dados, vendas, clientes, compras, \
+suporte, campanhas, métricas ou qualquer assunto relacionado ao negócio e aos dados da empresa.
+- "irrelevant": a pergunta é sobre qualquer outro assunto (receitas, entretenimento, \
+ciência geral, programação não relacionada aos dados, etc.).
+
+Responda APENAS com JSON puro: {{"category": "relevant"}} ou {{"category": "irrelevant"}}"""
+
+    response = llm.invoke([HumanMessage(content=prompt)])
+    parsed = _parse_json(response.content)
+
+    if parsed.get("category") == "irrelevant":
+        return {
+            **state,
+            "final_answer": (
+                f"Desculpe, {username}, não consigo ajudar com esse tipo de solicitação. "
+                "Estou aqui para responder perguntas sobre os dados da empresa — "
+                "vendas, clientes, compras, suporte e campanhas de marketing. "
+                "Pode reformular sua pergunta nesse contexto?"
+            ),
+            "chart_type": "none",
+            "sql_result": None,
+            "reasoning_steps": state.get("reasoning_steps", []) + [
+                "Pergunta fora do escopo dos dados — resposta bloqueada."
+            ],
+        }
+
+    return state
+
+
 def node_resolve_question(state):
     history = state.get("conversation_history") or []
     question = state["question"]
@@ -222,6 +262,8 @@ def node_execute_sql_step(state):
     }
 
 def node_format_answer(state):
+    username = state.get("username") or "usuário"
+
     if state.get("is_multi_step") and state.get("step_results"):
         step_results = state["step_results"]
         ctx = _steps_context(step_results)
@@ -234,15 +276,16 @@ Você executou {len(step_results)} queries. Resultados:
 {ctx}
 
 Com base em TODOS esses resultados, escreva:
-1. Uma resposta clara e objetiva em português para um diretor.
-2. O melhor tipo de visualização para o resultado final. Escolha um entre:
-   - "bar"      → comparar categorias ou rankings
-   - "line"     → tendência ao longo do tempo
+1. Uma resposta clara e objetiva em português dirigida a {username} (use o nome diretamente, sem "Prezado" nem tratamentos genéricos).
+2. O melhor tipo de visualização para o resultado final. SEMPRE prefira um gráfico quando os dados permitirem — use "table" ou "none" apenas como último recurso.
+   Escolha um entre:
+   - "bar"      → comparar categorias ou rankings; se o resultado tiver coluna temporal + coluna categórica + valor numérico, prefira "bar" (agrupado por categoria)
+   - "line"     → tendência ao longo do tempo; ideal quando o resultado tiver coluna temporal + coluna categórica + valor numérico (ex: vendas por canal por mês)
    - "pie"      → proporção/participação de partes em um todo (use quando houver poucas categorias, ≤8)
    - "scatter"  → correlação entre duas variáveis numéricas (requer ao menos 2 colunas numéricas)
-   - "heatmap"  → distribuição cruzada entre duas dimensões e um valor numérico (requer exatamente 3 colunas)
-   - "table"    → listagem de registros ou quando nenhum gráfico se aplica
-   - "none"     → resposta puramente textual, sem dados tabulares
+   - "heatmap"  → distribuição cruzada entre duas dimensões e um valor numérico (requer exatamente 3 colunas); NÃO use quando uma das dimensões for temporal
+   - "table"    → listagem de registros detalhados sem agregação clara
+   - "none"     → resposta puramente textual sem nenhum dado tabular
 
 Responda APENAS com JSON puro:
 {{"answer": "...", "chart_type": "..."}}"""
@@ -261,15 +304,16 @@ Responda APENAS com JSON puro:
     prompt = f"""Pergunta: {state["resolved_question"]}
 Resultado da query (primeiras linhas): {df.head(10).to_string()}
 
-1. Escreva uma resposta em português para o diretor.
-2. Sugira o melhor tipo de visualização. Escolha um entre:
-   - "bar"      → comparar categorias ou rankings
-   - "line"     → tendência ao longo do tempo
+1. Escreva uma resposta em português dirigida a {username} (use o nome diretamente, sem "Prezado" nem tratamentos genéricos).
+2. Escolha o melhor tipo de visualização. SEMPRE prefira um gráfico quando os dados permitirem — use "table" ou "none" apenas como último recurso.
+   Escolha um entre:
+   - "bar"      → comparar categorias ou rankings; se o resultado tiver coluna temporal + coluna categórica + valor numérico, prefira "bar" (agrupado por categoria)
+   - "line"     → tendência ao longo do tempo; ideal quando o resultado tiver coluna temporal + coluna categórica + valor numérico (ex: vendas por canal por mês)
    - "pie"      → proporção/participação de partes em um todo (use quando houver poucas categorias, ≤8)
    - "scatter"  → correlação entre duas variáveis numéricas (requer ao menos 2 colunas numéricas)
-   - "heatmap"  → distribuição cruzada entre duas dimensões e um valor numérico (requer exatamente 3 colunas)
-   - "table"    → listagem de registros ou quando nenhum gráfico se aplica
-   - "none"     → resposta puramente textual, sem dados tabulares
+   - "heatmap"  → distribuição cruzada entre duas dimensões e um valor numérico (requer exatamente 3 colunas); NÃO use quando uma das dimensões for temporal
+   - "table"    → listagem de registros detalhados sem agregação clara
+   - "none"     → resposta puramente textual sem nenhum dado tabular
 Responda APENAS com JSON puro: {{"answer": "...", "chart_type": "..."}}"""
 
     response = llm.invoke([HumanMessage(content=prompt)])
@@ -279,6 +323,10 @@ Responda APENAS com JSON puro: {{"answer": "...", "chart_type": "..."}}"""
         "final_answer": parsed["answer"],
         "chart_type": parsed["chart_type"],
     }
+
+def route_after_relevance(state):
+    return "end" if state.get("final_answer") else "resolve_question"
+
 
 def route_after_plan(state):
     return "generate_sql_step" if state.get("is_multi_step") else "generate_sql"

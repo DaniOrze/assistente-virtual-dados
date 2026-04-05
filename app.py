@@ -52,13 +52,28 @@ section[data-testid="stSidebar"] * { color: var(--color-layout-text) !important;
     color: var(--color-layout-muted) !important;
     border: none !important;
     text-align: left !important;
-    padding: 0.35rem 0.6rem !important;
+    padding: 0.2rem 0.6rem !important;
     border-radius: 6px !important;
     font-size: 0.85rem !important;
+    line-height: 1.4 !important;
     width: 100% !important;
     white-space: nowrap !important;
     overflow: hidden !important;
     text-overflow: ellipsis !important;
+}
+
+/* Reduz espaçamento entre linhas de conversa na sidebar */
+section[data-testid="stSidebar"] [data-testid="stHorizontalBlock"] {
+    gap: 0 !important;
+    margin-bottom: 0 !important;
+    margin-top: 0 !important;
+}
+section[data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] {
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+}
+section[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
+    gap: 0.2rem !important;
 }
 .stButton > button:hover {
     background-color: rgba(242,101,34,.1) !important;
@@ -236,19 +251,19 @@ def df_to_pdf(df, answer: str) -> bytes:
     pdf.set_font("Helvetica", "B", 14)
     pdf.cell(0, 10, "Resultado da Consulta", ln=True)
     pdf.set_font("Helvetica", "", 11)
-    pdf.multi_cell(0, 8, answer.replace("\u2022", "-").encode("latin-1", errors="replace").decode("latin-1"))
+    pdf.multi_cell(0, 8, _sanitize(answer))
     pdf.ln(4)
 
     col_width = pdf.epw / max(len(df.columns), 1)
     pdf.set_font("Helvetica", "B", 10)
     for col in df.columns:
-        pdf.cell(col_width, 8, str(col), border=1)
+        pdf.cell(col_width, 8, _sanitize(str(col)), border=1)
     pdf.ln()
 
     pdf.set_font("Helvetica", "", 10)
     for _, row in df.iterrows():
         for val in row:
-            pdf.cell(col_width, 8, str(val), border=1)
+            pdf.cell(col_width, 8, _sanitize(str(val)), border=1)
         pdf.ln()
 
     return bytes(pdf.output())
@@ -324,10 +339,25 @@ def conversation_to_pdf(history: list, title: str) -> bytes:
 
 def render_chart(df, chart):
     cols = df.columns
+    num_cols = [c for c in cols if pd.api.types.is_numeric_dtype(df[c])]
+    cat_cols = [c for c in cols if not pd.api.types.is_numeric_dtype(df[c])]
+
     if chart == "bar":
-        st.plotly_chart(px.bar(df, x=cols[0], y=cols[1]), use_container_width=True)
+        if len(num_cols) >= 1 and len(cat_cols) >= 2:
+            st.plotly_chart(
+                px.bar(df, x=cat_cols[0], y=num_cols[0], color=cat_cols[1], barmode="group"),
+                use_container_width=True,
+            )
+        else:
+            st.plotly_chart(px.bar(df, x=cols[0], y=cols[1]), use_container_width=True)
     elif chart == "line":
-        st.plotly_chart(px.line(df, x=cols[0], y=cols[1]), use_container_width=True)
+        if len(num_cols) >= 1 and len(cat_cols) >= 2:
+            st.plotly_chart(
+                px.line(df, x=cat_cols[0], y=num_cols[0], color=cat_cols[1]),
+                use_container_width=True,
+            )
+        else:
+            st.plotly_chart(px.line(df, x=cols[0], y=cols[1]), use_container_width=True)
     elif chart == "pie":
         st.plotly_chart(px.pie(df, names=cols[0], values=cols[1]), use_container_width=True)
     elif chart == "scatter":
@@ -446,18 +476,34 @@ if st.session_state.user_id is None:
 
     st.stop()
 
+def _delete_if_empty(conv_id: int) -> None:
+    if conv_id is None:
+        return
+    convs = load_conversations(st.session_state.user_id)
+    conv = next((c for c in convs if c["id"] == conv_id), None)
+    if conv and conv["msg_count"] == 0:
+        delete_conversation(conv_id, st.session_state.user_id)
+
+
 def start_new_conversation():
+    _delete_if_empty(st.session_state.conv_id)
     conv_id = create_conversation(st.session_state.user_id, "Nova conversa")
     st.session_state.conv_id = conv_id
     st.session_state.viewed_conv_id = conv_id
     st.session_state.history = []
 
 def switch_to_conversation(conv_id: int):
+    _delete_if_empty(st.session_state.conv_id)
+    st.session_state.conv_id = conv_id
     st.session_state.viewed_conv_id = conv_id
     st.session_state.history = load_history(st.session_state.user_id, conv_id)
 
 if st.session_state.conv_id is None:
     convs = load_conversations(st.session_state.user_id)
+    for c in convs:
+        if c["msg_count"] == 0:
+            delete_conversation(c["id"], st.session_state.user_id)
+    convs = [c for c in convs if c["msg_count"] > 0]
     if convs:
         most_recent = convs[0]
         st.session_state.conv_id = most_recent["id"]
@@ -549,8 +595,6 @@ with st.sidebar:
         st.rerun()
 
 
-viewing_active = st.session_state.viewed_conv_id == st.session_state.conv_id
-
 convs_map = {c["id"]: c for c in load_conversations(st.session_state.user_id)}
 current_conv = convs_map.get(st.session_state.viewed_conv_id, {})
 conv_title = current_conv.get("title", "Conversa")
@@ -558,20 +602,10 @@ conv_title = current_conv.get("title", "Conversa")
 header_col, export_col = st.columns([6, 1])
 
 with header_col:
-    if viewing_active:
-        st.markdown(
-            f"<h2 style='color:#F26522;letter-spacing:-0.5px;margin-bottom:0'>{conv_title}</h2>",
-            unsafe_allow_html=True,
-        )
-    else:
-        st.markdown(
-            f"<h2 style='color:#8B949E;letter-spacing:-0.5px;margin-bottom:0'>"
-            f"🔒 {conv_title} <span style='font-size:0.85rem;font-weight:400'>(somente leitura)</span></h2>",
-            unsafe_allow_html=True,
-        )
-        if st.button("↩  Voltar para conversa ativa"):
-            switch_to_conversation(st.session_state.conv_id)
-            st.rerun()
+    st.markdown(
+        f"<h2 style='color:#F26522;letter-spacing:-0.5px;margin-bottom:0'>{conv_title}</h2>",
+        unsafe_allow_html=True,
+    )
 
 with export_col:
     if st.session_state.history:
@@ -595,72 +629,67 @@ for i, entry in enumerate(history):
     with st.chat_message("assistant"):
         render_assistant_content(entry, key_prefix=f"msg_{i}")
 
-if viewing_active:
-    question = st.chat_input("Faça sua pergunta sobre os dados…")
+question = st.chat_input("Faça sua pergunta sobre os dados…")
 
-    if question:
-        if not history:
-            title = question if len(question) <= 40 else question[:38] + "…"
-            rename_conversation(st.session_state.conv_id, title)
+if question:
+    conv_id = st.session_state.conv_id
 
-        with st.chat_message("user"):
-            st.markdown(question)
+    if not history:
+        title = question if len(question) <= 40 else question[:38] + "…"
+        rename_conversation(conv_id, title)
 
-        with st.chat_message("assistant"):
-            with st.spinner("Analisando…"):
-                graph = build_graph()
-                result = graph.invoke({
-                    "question": question,
-                    "resolved_question": question,
-                    "reasoning_steps": [],
-                    "retries": 0,
-                    "is_multi_step": False,
-                    "query_plan": [],
-                    "current_step": 0,
-                    "step_results": [],
-                    "conversation_history": [
-                        {"question": h["question"], "answer": h["answer"]}
-                        for h in history
-                    ],
-                })
+    with st.chat_message("user"):
+        st.markdown(question)
 
-            answer = result["final_answer"]
-            resolved = result.get("resolved_question", question)
-            df = result.get("sql_result")
-            chart = result.get("chart_type")
-            is_multi = result.get("is_multi_step", False)
-            step_results = result.get("step_results") or []
-
-            entry = {
+    with st.chat_message("assistant"):
+        with st.spinner("Analisando…"):
+            graph = build_graph()
+            result = graph.invoke({
                 "question": question,
-                "resolved": resolved,
-                "answer": answer,
-                "df": df,
-                "chart": chart,
-                "is_multi_step": is_multi,
-                "step_results": step_results,
-                "reasoning_steps": result["reasoning_steps"],
-            }
-            render_assistant_content(entry, key_prefix="current")
+                "resolved_question": question,
+                "reasoning_steps": [],
+                "retries": 0,
+                "is_multi_step": False,
+                "query_plan": [],
+                "current_step": 0,
+                "step_results": [],
+                "username": st.session_state.username,
+                "conversation_history": [
+                    {"question": h["question"], "answer": h["answer"]}
+                    for h in history
+                ],
+            })
 
-        save_history_entry(
-            user_id=st.session_state.user_id,
-            conversation_id=st.session_state.conv_id,
-            question=question,
-            resolved_question=resolved,
-            answer=answer,
-            chart_type=chart,
-            df=df,
-            is_multi_step=is_multi,
-            step_results=step_results,
-            reasoning_steps=result["reasoning_steps"],
-        )
-        st.session_state.history.append(entry)
-        st.rerun()
-else:
-    st.markdown(
-        "<div style='text-align:center;color:#8B949E;font-size:0.85rem;padding:1rem 0'>"
-        "Esta conversa está em modo leitura. Clique em <b>Nova conversa</b> ou volte para a conversa ativa para continuar."
-        "</div>",
-        unsafe_allow_html=True,
+        answer = result["final_answer"]
+        resolved = result.get("resolved_question", question)
+        df = result.get("sql_result")
+        chart = result.get("chart_type")
+        is_multi = result.get("is_multi_step", False)
+        step_results = result.get("step_results") or []
+
+        entry = {
+            "question": question,
+            "resolved": resolved,
+            "answer": answer,
+            "df": df,
+            "chart": chart,
+            "is_multi_step": is_multi,
+            "step_results": step_results,
+            "reasoning_steps": result["reasoning_steps"],
+        }
+        render_assistant_content(entry, key_prefix="current")
+
+    save_history_entry(
+        user_id=st.session_state.user_id,
+        conversation_id=conv_id,
+        question=question,
+        resolved_question=resolved,
+        answer=answer,
+        chart_type=chart,
+        df=df,
+        is_multi_step=is_multi,
+        step_results=step_results,
+        reasoning_steps=result["reasoning_steps"],
     )
+    st.session_state.history.append(entry)
+    st.rerun()

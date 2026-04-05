@@ -1,6 +1,7 @@
 from langgraph.graph import StateGraph, END
 from .state import AgentState
 from .nodes import (
+    node_check_relevance,
     node_resolve_question,
     node_get_schema,
     node_plan_query,
@@ -9,6 +10,7 @@ from .nodes import (
     node_generate_sql_step,
     node_execute_sql_step,
     node_format_answer,
+    route_after_relevance,
     route_after_plan,
     should_retry,
     should_continue_steps,
@@ -18,6 +20,7 @@ from .nodes import (
 def build_graph():
     graph = StateGraph(AgentState)
 
+    graph.add_node("check_relevance", node_check_relevance)
     graph.add_node("resolve_question", node_resolve_question)
     graph.add_node("get_schema", node_get_schema)
     graph.add_node("plan_query", node_plan_query)
@@ -27,7 +30,11 @@ def build_graph():
     graph.add_node("execute_sql_step", node_execute_sql_step)
     graph.add_node("format_answer", node_format_answer)
 
-    graph.set_entry_point("resolve_question")
+    graph.set_entry_point("check_relevance")
+    graph.add_conditional_edges("check_relevance", route_after_relevance, {
+        "resolve_question": "resolve_question",
+        "end": END,
+    })
     graph.add_edge("resolve_question", "get_schema")
     graph.add_edge("get_schema", "plan_query")
 
