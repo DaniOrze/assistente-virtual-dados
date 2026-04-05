@@ -527,7 +527,7 @@ with st.sidebar:
 
     st.markdown("<div style='margin:0.8rem 0 0.4rem;font-size:0.72rem;color:#8B949E;text-transform:uppercase;letter-spacing:.05em'>Conversas</div>", unsafe_allow_html=True)
 
-    convs = load_conversations(st.session_state.user_id)
+    convs = [c for c in load_conversations(st.session_state.user_id) if c["msg_count"] > 0]
     for conv in convs:
         is_active = conv["id"] == st.session_state.viewed_conv_id
         label = conv["title"]
