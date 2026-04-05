@@ -6,7 +6,7 @@ from fpdf import FPDF
 from auth import (
     init_db, create_user, verify_user,
     create_conversation, load_conversations, rename_conversation,
-    delete_conversation, save_history_entry, load_history,
+    delete_conversation, save_history_entry, update_history_entry, load_history,
 )
 from agent.graph import build_graph
 
@@ -170,6 +170,24 @@ summary { color: var(--color-layout-muted) !important; font-size: 0.82rem; }
     font-size: 0.8rem !important;
 }
 .stDownloadButton > button:hover { background-color: rgba(242,101,34,.1) !important; }
+
+/* Botão tentar novamente */
+[data-testid="stChatMessage"] [data-testid="stButton"] > button {
+    background: transparent !important;
+    color: var(--color-layout-muted) !important;
+    border: 1px solid var(--color-layout-border) !important;
+    border-radius: 6px !important;
+    font-size: 0.75rem !important;
+    padding: 0.15rem 0.5rem !important;
+    width: auto !important;
+    min-width: unset !important;
+    margin-top: 0.4rem !important;
+}
+[data-testid="stChatMessage"] [data-testid="stButton"] > button:hover {
+    background-color: rgba(242,101,34,.1) !important;
+    color: var(--color-layout-orange) !important;
+    border-color: var(--color-layout-orange) !important;
+}
 
 /* Misc */
 hr { border-color: var(--color-layout-border) !important; }
@@ -337,7 +355,7 @@ def conversation_to_pdf(history: list, title: str) -> bytes:
     return bytes(pdf.output())
 
 
-def render_chart(df, chart):
+def render_chart(df, chart, key_prefix: str = "chart"):
     cols = df.columns
     num_cols = [c for c in cols if pd.api.types.is_numeric_dtype(df[c])]
     cat_cols = [c for c in cols if not pd.api.types.is_numeric_dtype(df[c])]
@@ -347,26 +365,28 @@ def render_chart(df, chart):
             st.plotly_chart(
                 px.bar(df, x=cat_cols[0], y=num_cols[0], color=cat_cols[1], barmode="group"),
                 use_container_width=True,
+                key=f"{key_prefix}_bar",
             )
         else:
-            st.plotly_chart(px.bar(df, x=cols[0], y=cols[1]), use_container_width=True)
+            st.plotly_chart(px.bar(df, x=cols[0], y=cols[1]), use_container_width=True, key=f"{key_prefix}_bar")
     elif chart == "line":
         if len(num_cols) >= 1 and len(cat_cols) >= 2:
             st.plotly_chart(
                 px.line(df, x=cat_cols[0], y=num_cols[0], color=cat_cols[1]),
                 use_container_width=True,
+                key=f"{key_prefix}_line",
             )
         else:
-            st.plotly_chart(px.line(df, x=cols[0], y=cols[1]), use_container_width=True)
+            st.plotly_chart(px.line(df, x=cols[0], y=cols[1]), use_container_width=True, key=f"{key_prefix}_line")
     elif chart == "pie":
-        st.plotly_chart(px.pie(df, names=cols[0], values=cols[1]), use_container_width=True)
+        st.plotly_chart(px.pie(df, names=cols[0], values=cols[1]), use_container_width=True, key=f"{key_prefix}_pie")
     elif chart == "scatter":
         y_col = cols[2] if len(cols) >= 3 else cols[1]
         color_col = cols[2] if len(cols) >= 3 else None
-        st.plotly_chart(px.scatter(df, x=cols[0], y=cols[1], color=color_col, size=y_col if pd.api.types.is_numeric_dtype(df[y_col]) else None), use_container_width=True)
+        st.plotly_chart(px.scatter(df, x=cols[0], y=cols[1], color=color_col, size=y_col if pd.api.types.is_numeric_dtype(df[y_col]) else None), use_container_width=True, key=f"{key_prefix}_scatter")
     elif chart == "heatmap":
         pivot = df.pivot(index=cols[0], columns=cols[1], values=cols[2]) if len(cols) >= 3 else df
-        st.plotly_chart(px.imshow(pivot, text_auto=True), use_container_width=True)
+        st.plotly_chart(px.imshow(pivot, text_auto=True), use_container_width=True, key=f"{key_prefix}_heatmap")
     else:
         st.dataframe(df, use_container_width=True)
 
@@ -383,7 +403,7 @@ def render_assistant_content(entry: dict, key_prefix: str) -> None:
 
     df = entry.get("df")
     if df is not None and not df.empty:
-        render_chart(df, entry.get("chart"))
+        render_chart(df, entry.get("chart"), key_prefix=key_prefix)
 
         col_csv, col_pdf = st.columns(2)
         with col_csv:
@@ -421,6 +441,7 @@ for key, default in [
     ("viewed_conv_id", None),
     ("history", []),
     ("pending_delete", None),
+    ("retry_index", None),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -628,6 +649,68 @@ for i, entry in enumerate(history):
         st.markdown(entry["question"])
     with st.chat_message("assistant"):
         render_assistant_content(entry, key_prefix=f"msg_{i}")
+        if st.button("↺ Tentar novamente", key=f"retry_{i}", help="Refazer esta pesquisa"):
+            st.session_state.retry_index = i
+            st.rerun()
+
+if st.session_state.retry_index is not None:
+    idx = st.session_state.retry_index
+    st.session_state.retry_index = None
+    retry_entry = history[idx]
+    retry_question = retry_entry["question"]
+
+    with st.chat_message("assistant"):
+        with st.spinner("Analisando…"):
+            graph = build_graph()
+            result = graph.invoke({
+                "question": retry_question,
+                "resolved_question": retry_question,
+                "reasoning_steps": [],
+                "retries": 0,
+                "is_multi_step": False,
+                "query_plan": [],
+                "current_step": 0,
+                "step_results": [],
+                "username": st.session_state.username,
+                "conversation_history": [
+                    {"question": h["question"], "answer": h["answer"]}
+                    for h in history[:idx]
+                ],
+            })
+
+        answer = result["final_answer"]
+        resolved = result.get("resolved_question", retry_question)
+        df = result.get("sql_result")
+        chart = result.get("chart_type")
+        is_multi = result.get("is_multi_step", False)
+        step_results = result.get("step_results") or []
+
+        new_entry = {
+            "id": retry_entry.get("id"),
+            "question": retry_question,
+            "resolved": resolved,
+            "answer": answer,
+            "df": df,
+            "chart": chart,
+            "is_multi_step": is_multi,
+            "step_results": step_results,
+            "reasoning_steps": result["reasoning_steps"],
+        }
+        render_assistant_content(new_entry, key_prefix=f"retry_{idx}")
+
+    if retry_entry.get("id") is not None:
+        update_history_entry(
+            entry_id=retry_entry["id"],
+            resolved_question=resolved,
+            answer=answer,
+            chart_type=chart,
+            df=df,
+            is_multi_step=is_multi,
+            step_results=step_results,
+            reasoning_steps=result["reasoning_steps"],
+        )
+    st.session_state.history[idx] = new_entry
+    st.rerun()
 
 question = st.chat_input("Faça sua pergunta sobre os dados…")
 

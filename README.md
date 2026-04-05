@@ -32,6 +32,7 @@ O sistema funciona como um assistente: recebe uma pergunta em português, descob
 - Visualização automática: tabela ou gráficos, conforme o tipo de dado retornado
 - Exportação do resultado como CSV ou PDF
 - Painel de raciocínio expansível: exibe cada etapa e a query gerada
+- Tentar novamente: Opção para fazer o agente reexecutar a pergunta anterior
 
 ---
 
@@ -108,8 +109,10 @@ desafio_tecnico/
 ├── agent/
 │   ├── graph.py        # Construção e compilação do grafo LangGraph
 │   ├── nodes.py        # Lógica de cada nó do agente
-│   ├── state.py        # TypedDict com 19 campos de estado compartilhado
+│   ├── state.py        # TypedDict com 16 campos de estado compartilhado
 │   └── tools.py        # Funções de acesso ao banco
+├── tests/
+│   └── test_nodes.py   # Testes unitários dos nós do agente
 └── db/
     ├── anexo_desafio_1.db   # Dados de negócio — somente leitura
     └── app.db               # Usuários e histórico — criado na primeira execução
@@ -129,7 +132,7 @@ O agente é construído com **LangGraph** e opera como um grafo de nós com rote
 - **Descoberta dinâmica de schema** garante que o agente funcione em qualquer banco SQLite sem configuração prévia.
 - **Auto-correção por loop**: ao falhar, o nó `generate_sql` recebe o erro como contexto e tenta gerar uma query corrigida, até 3 vezes.
 - **Separação de banco de dados**: os dados analíticos (`anexo_desafio_1.db`) nunca são alterados; usuários e histórico ficam em `app.db`, isolando responsabilidades.
-- **Estado rico**: o `TypedDict` de estado carrega 19 campos — incluindo histórico de conversa, steps intermediários e raciocínio — permitindo que qualquer nó acesse o contexto completo da sessão.
+- **Estado rico**: o `TypedDict` de estado carrega 16 campos — incluindo histórico de conversa, steps intermediários e raciocínio — permitindo que qualquer nó acesse o contexto completo da sessão.
 
 ## Sugestões de Melhorias e Extensões
 
@@ -140,7 +143,7 @@ O agente é construído com **LangGraph** e opera como um grafo de nós com rote
 
 ### Experiência do usuário
 
-- **Edição de mensagens** — permitir que o usuário edite uma pergunta anterior e reexecute o agente a partir daquele ponto, sem iniciar uma nova conversa.
+- **Edição de mensagens** — permitir que o usuário edite o texto de uma pergunta anterior e reexecute o agente a partir daquele ponto, sem iniciar uma nova conversa.
 - **Modo de compartilhamento** — gerar um link com visualização read-only de uma conversa específica, útil para apresentar análises a stakeholders.
 
 ### Infraestrutura

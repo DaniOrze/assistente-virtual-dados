@@ -186,10 +186,50 @@ def save_history_entry(
         )
 
 
+def update_history_entry(
+    entry_id: int,
+    resolved_question: str,
+    answer: str,
+    chart_type: str | None,
+    df,
+    is_multi_step: bool,
+    step_results: list,
+    reasoning_steps: list,
+) -> None:
+    sql_json = df.to_json(orient="records", force_ascii=False) if df is not None else None
+
+    step_json = None
+    if step_results:
+        step_json = json.dumps([
+            {"desc": desc, "data": sdf.to_json(orient="records", force_ascii=False)}
+            for desc, sdf in step_results
+        ], ensure_ascii=False)
+
+    with _conn() as cx:
+        cx.execute(
+            """UPDATE history
+               SET resolved_question = ?, answer = ?, chart_type = ?,
+                   sql_result_json = ?, is_multi_step = ?,
+                   step_results_json = ?, reasoning_steps_json = ?,
+                   created_at = datetime('now')
+               WHERE id = ?""",
+            (
+                resolved_question,
+                answer,
+                chart_type,
+                sql_json,
+                int(is_multi_step),
+                step_json,
+                json.dumps(reasoning_steps, ensure_ascii=False),
+                entry_id,
+            ),
+        )
+
+
 def load_history(user_id: int, conversation_id: int) -> list[dict]:
     with _conn() as cx:
         rows = cx.execute(
-            """SELECT question, resolved_question, answer, chart_type,
+            """SELECT id, question, resolved_question, answer, chart_type,
                       sql_result_json, is_multi_step, step_results_json,
                       reasoning_steps_json
                FROM history
@@ -200,7 +240,7 @@ def load_history(user_id: int, conversation_id: int) -> list[dict]:
 
     entries = []
     for row in rows:
-        (question, resolved, answer, chart_type,
+        (entry_id, question, resolved, answer, chart_type,
          sql_json, is_multi, step_json, rs_json) = row
 
         df = pd.read_json(io.StringIO(sql_json), orient="records") if sql_json else None
@@ -214,6 +254,7 @@ def load_history(user_id: int, conversation_id: int) -> list[dict]:
                 ))
 
         entries.append({
+            "id": entry_id,
             "question": question,
             "resolved": resolved or question,
             "answer": answer,
