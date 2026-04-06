@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from fpdf import FPDF
+import tempfile
+import os
 
 from auth import (
     init_db, create_user, verify_user,
@@ -263,7 +265,64 @@ div:has(> div > .btn-delete):hover .btn-delete button {
 </style>
 """, unsafe_allow_html=True)
 
-def df_to_pdf(df, answer: str) -> bytes:
+_PDF_LAYOUT = dict(
+    paper_bgcolor="white",
+    plot_bgcolor="white",
+    font_color="#333333",
+)
+
+def _build_chart_figure(df, chart_type, for_pdf: bool = False):
+    if chart_type in (None, "none", "table") or df is None or df.empty:
+        return None
+    cols = df.columns
+    num_cols = [c for c in cols if pd.api.types.is_numeric_dtype(df[c])]
+    cat_cols = [c for c in cols if not pd.api.types.is_numeric_dtype(df[c])]
+    kw = dict(template="plotly") if for_pdf else {}
+    try:
+        if chart_type == "bar":
+            if len(num_cols) >= 1 and len(cat_cols) >= 2:
+                fig = px.bar(df, x=cat_cols[0], y=num_cols[0], color=cat_cols[1], barmode="group", **kw)
+            else:
+                fig = px.bar(df, x=cols[0], y=cols[1], **kw)
+        elif chart_type == "line":
+            if len(num_cols) >= 1 and len(cat_cols) >= 2:
+                fig = px.line(df, x=cat_cols[0], y=num_cols[0], color=cat_cols[1], **kw)
+            else:
+                fig = px.line(df, x=cols[0], y=cols[1], **kw)
+        elif chart_type == "pie":
+            fig = px.pie(df, names=cols[0], values=cols[1], **kw)
+        elif chart_type == "scatter":
+            y_col = cols[2] if len(cols) >= 3 else cols[1]
+            color_col = cols[2] if len(cols) >= 3 else None
+            fig = px.scatter(df, x=cols[0], y=cols[1], color=color_col,
+                             size=y_col if pd.api.types.is_numeric_dtype(df[y_col]) else None, **kw)
+        elif chart_type == "heatmap":
+            pivot = df.pivot(index=cols[0], columns=cols[1], values=cols[2]) if len(cols) >= 3 else df
+            fig = px.imshow(pivot, text_auto=True, **kw)
+        else:
+            return None
+        if for_pdf:
+            fig.update_layout(**_PDF_LAYOUT)
+        return fig
+    except Exception:
+        return None
+
+
+def _chart_to_png_path(df, chart_type) -> str | None:
+    fig = _build_chart_figure(df, chart_type, for_pdf=True)
+    if fig is None:
+        return None
+    try:
+        png_bytes = fig.to_image(format="png", width=900, height=420, scale=2)
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+        tmp.write(png_bytes)
+        tmp.close()
+        return tmp.name
+    except Exception:
+        return None
+
+
+def df_to_pdf(df, answer: str, chart_type: str | None = None) -> bytes:
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Helvetica", "B", 14)
@@ -271,6 +330,14 @@ def df_to_pdf(df, answer: str) -> bytes:
     pdf.set_font("Helvetica", "", 11)
     pdf.multi_cell(0, 8, _sanitize(answer))
     pdf.ln(4)
+
+    chart_path = _chart_to_png_path(df, chart_type)
+    if chart_path:
+        try:
+            pdf.image(chart_path, x=pdf.l_margin, w=pdf.epw)
+            pdf.ln(4)
+        finally:
+            os.unlink(chart_path)
 
     col_width = pdf.epw / max(len(df.columns), 1)
     pdf.set_font("Helvetica", "B", 10)
@@ -327,6 +394,14 @@ def conversation_to_pdf(history: list, title: str) -> bytes:
 
         df = entry.get("df")
         if df is not None and not df.empty:
+            chart_path = _chart_to_png_path(df, entry.get("chart"))
+            if chart_path:
+                try:
+                    pdf.image(chart_path, x=pdf.l_margin, w=pdf.epw)
+                    pdf.ln(3)
+                finally:
+                    os.unlink(chart_path)
+
             col_count = len(df.columns)
             col_w = pdf.epw / max(col_count, 1)
 
@@ -337,16 +412,10 @@ def conversation_to_pdf(history: list, title: str) -> bytes:
             pdf.ln()
 
             pdf.set_font("Helvetica", "", 8)
-            for _, row in df.head(20).iterrows():
+            for _, row in df.iterrows():
                 for val in row:
                     pdf.cell(col_w, 6, _sanitize(str(val))[:20], border=1)
                 pdf.ln()
-
-            if len(df) > 20:
-                pdf.set_font("Helvetica", "I", 8)
-                pdf.set_text_color(120, 120, 120)
-                pdf.cell(0, 6, f"  ... e mais {len(df) - 20} linhas", ln=True)
-                pdf.set_text_color(0, 0, 0)
 
             pdf.ln(2)
 
@@ -356,37 +425,9 @@ def conversation_to_pdf(history: list, title: str) -> bytes:
 
 
 def render_chart(df, chart, key_prefix: str = "chart"):
-    cols = df.columns
-    num_cols = [c for c in cols if pd.api.types.is_numeric_dtype(df[c])]
-    cat_cols = [c for c in cols if not pd.api.types.is_numeric_dtype(df[c])]
-
-    if chart == "bar":
-        if len(num_cols) >= 1 and len(cat_cols) >= 2:
-            st.plotly_chart(
-                px.bar(df, x=cat_cols[0], y=num_cols[0], color=cat_cols[1], barmode="group"),
-                use_container_width=True,
-                key=f"{key_prefix}_bar",
-            )
-        else:
-            st.plotly_chart(px.bar(df, x=cols[0], y=cols[1]), use_container_width=True, key=f"{key_prefix}_bar")
-    elif chart == "line":
-        if len(num_cols) >= 1 and len(cat_cols) >= 2:
-            st.plotly_chart(
-                px.line(df, x=cat_cols[0], y=num_cols[0], color=cat_cols[1]),
-                use_container_width=True,
-                key=f"{key_prefix}_line",
-            )
-        else:
-            st.plotly_chart(px.line(df, x=cols[0], y=cols[1]), use_container_width=True, key=f"{key_prefix}_line")
-    elif chart == "pie":
-        st.plotly_chart(px.pie(df, names=cols[0], values=cols[1]), use_container_width=True, key=f"{key_prefix}_pie")
-    elif chart == "scatter":
-        y_col = cols[2] if len(cols) >= 3 else cols[1]
-        color_col = cols[2] if len(cols) >= 3 else None
-        st.plotly_chart(px.scatter(df, x=cols[0], y=cols[1], color=color_col, size=y_col if pd.api.types.is_numeric_dtype(df[y_col]) else None), use_container_width=True, key=f"{key_prefix}_scatter")
-    elif chart == "heatmap":
-        pivot = df.pivot(index=cols[0], columns=cols[1], values=cols[2]) if len(cols) >= 3 else df
-        st.plotly_chart(px.imshow(pivot, text_auto=True), use_container_width=True, key=f"{key_prefix}_heatmap")
+    fig = _build_chart_figure(df, chart)
+    if fig is not None:
+        st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_{chart}")
     else:
         st.dataframe(df, use_container_width=True)
 
@@ -417,7 +458,7 @@ def render_assistant_content(entry: dict, key_prefix: str) -> None:
         with col_pdf:
             st.download_button(
                 "Baixar PDF",
-                data=df_to_pdf(df, entry["answer"]),
+                data=df_to_pdf(df, entry["answer"], chart_type=entry.get("chart")),
                 file_name="resultado.pdf",
                 mime="application/pdf",
                 key=f"{key_prefix}_pdf",
